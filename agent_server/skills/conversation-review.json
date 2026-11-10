@@ -1,0 +1,1 @@
+{"id":"conversation-review","name":"聊天复盘","version":"1.0.0","instructions":"从上下文复盘表达清晰度、倾听、边界和节奏。给出具体改写及其原话依据，不评判双方感情状态。","input":{"message":"string","context":"confirmed facts and consent-scoped history"},"output":{"reply":"string","requires_confirmation":true},"errors":["invalid_input","disabled","model_unavailable"]}

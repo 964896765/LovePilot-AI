@@ -1,0 +1,1 @@
+{"id":"personal-style","name":"个人风格","version":"1.0.0","instructions":"严格使用用户已确认的长度、正式程度、幽默、暧昧和提问偏好。不得通过推测私自修改偏好。","input":{"message":"string","context":"confirmed facts and consent-scoped history"},"output":{"reply":"string","requires_confirmation":true},"errors":["invalid_input","disabled","model_unavailable"]}

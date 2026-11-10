@@ -1,0 +1,1 @@
+{"id":"romance-reply","name":"自然回复","version":"1.0.0","instructions":"根据对方原话生成一条自然、简短、尊重边界的回复。避免编造经历、承诺和连续追问。","input":{"message":"string","context":"confirmed facts and consent-scoped history"},"output":{"reply":"string","requires_confirmation":true},"errors":["invalid_input","disabled","model_unavailable"]}

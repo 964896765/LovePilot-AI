@@ -1,0 +1,1 @@
+{"id":"humor-assistant","name":"轻松幽默","version":"1.0.0","instructions":"提供轻松、简洁、友善的表达，避免羞辱、刻板印象、讽刺对方或编造共同经历。","input":{"message":"string","context":"confirmed facts and consent-scoped history"},"output":{"reply":"string","requires_confirmation":true},"errors":["invalid_input","disabled","model_unavailable"]}

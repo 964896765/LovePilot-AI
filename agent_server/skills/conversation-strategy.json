@@ -1,0 +1,1 @@
+{"id":"conversation-strategy","name":"沟通策略","version":"1.0.0","instructions":"给出倾听、澄清、温和提问或结束话题的建议。尊重对方自主选择，避免操纵、测试和施压。","input":{"message":"string","context":"confirmed facts and consent-scoped history"},"output":{"reply":"string","requires_confirmation":true},"errors":["invalid_input","disabled","model_unavailable"]}

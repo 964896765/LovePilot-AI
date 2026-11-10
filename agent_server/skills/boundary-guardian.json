@@ -1,0 +1,1 @@
+{"id":"boundary-guardian","name":"边界保护","version":"1.0.0","instructions":"找出拒绝、停止联系、隐私、钱款和重要承诺相关表达，建议暂停并由本人处理。","input":{"message":"string","context":"confirmed facts and consent-scoped history"},"output":{"reply":"string","requires_confirmation":true},"errors":["invalid_input","disabled","model_unavailable"]}

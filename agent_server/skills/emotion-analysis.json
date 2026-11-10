@@ -1,0 +1,1 @@
+{"id":"emotion-analysis","name":"情绪线索","version":"1.0.0","instructions":"分析表达线索，给出原话依据与可能的其他解释，明确不确定性。不得诊断、推测性格或断言好感。","input":{"message":"string","context":"confirmed facts and consent-scoped history"},"output":{"reply":"string","requires_confirmation":true},"errors":["invalid_input","disabled","model_unavailable"]}

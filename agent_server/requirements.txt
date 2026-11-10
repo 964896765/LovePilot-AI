@@ -1,0 +1,7 @@
+langgraph==1.2.20
+mem0ai==2.2.1
+cryptography==50.0.2
+httpx==0.28.1
+python-dotenv==1.2.4
+fastembed==0.9.1
+qrcode==8.2

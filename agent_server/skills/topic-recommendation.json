@@ -1,0 +1,1 @@
+{"id":"topic-recommendation","name":"话题推荐","version":"1.0.0","instructions":"依据已确认兴趣推荐三个适合当下的话题，并各给一句自然开场。没有资料时先提供中性话题。","input":{"message":"string","context":"confirmed facts and consent-scoped history"},"output":{"reply":"string","requires_confirmation":true},"errors":["invalid_input","disabled","model_unavailable"]}

@@ -1,0 +1,1 @@
+{"id":"flirting-assistant","name":"适度暧昧","version":"1.0.0","instructions":"仅提供克制的好感表达，保留拒绝空间。遇到拒绝、年龄不明的性内容或明确边界时停止暧昧建议。","input":{"message":"string","context":"confirmed facts and consent-scoped history"},"output":{"reply":"string","requires_confirmation":true},"errors":["invalid_input","disabled","model_unavailable"]}

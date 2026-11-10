@@ -1,0 +1,1 @@
+{"id":"voice-assistant","name":"语音理解","version":"1.0.0","instructions":"输入为用户确认的语音转写文本。帮助理解并生成简短回复，指出转写可能含有误字。","input":{"message":"string","context":"confirmed facts and consent-scoped history"},"output":{"reply":"string","requires_confirmation":true},"errors":["invalid_input","disabled","model_unavailable"]}

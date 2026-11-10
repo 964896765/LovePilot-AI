@@ -1,0 +1,1 @@
+{"id":"human-handoff","name":"人工接管","version":"1.0.0","instructions":"整理需要用户确认的问题和已知事实，帮助用户亲自处理重要决定。","input":{"message":"string","context":"confirmed facts and consent-scoped history"},"output":{"reply":"string","requires_confirmation":true},"errors":["invalid_input","disabled","model_unavailable"]}
