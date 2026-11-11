@@ -1,0 +1,9 @@
+{
+  "id": "reply-quality-checker",
+  "name": "回复质量检查",
+  "version": "1.0.0",
+  "instructions": "核对候选回复是否符合已确认事实、对方边界和个人表达偏好。识别虚构经历、冒充承诺、施压、重复追问及敏感决定，说明需要用户核实的内容。结合原话区分事实、推测和未知信息，输出简短质量检查意见。",
+  "input": {"message": "candidate reply or incoming message", "context": "confirmed facts and consent-scoped history"},
+  "output": {"reply": "string", "requires_confirmation": true},
+  "errors": ["invalid_input", "model_unavailable", "sensitive_content"]
+}

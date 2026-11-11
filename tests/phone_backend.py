@@ -26,8 +26,15 @@ def main():
             payload = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
             assert payload['messages'][-1]['role'] == 'user'
             model_calls.append(1)
-            content = json.dumps({'reply': '听起来很有意思，你最近看了哪部电影？',
-                                  'analysis': {'expression_cues': ['原话主动分享'], 'uncertain': True}}, ensure_ascii=False)
+            generated = {'reply': '听起来很有意思，你最近看了哪部电影？',
+                         'analysis': {'expression_cues': ['原话主动分享'], 'uncertain': True}}
+            if 'reply_options' in payload['messages'][0]['content']:
+                generated.update(reply_options=[
+                    {'id': 'gentle', 'text': generated['reply'], 'reason': '延续原话中的话题'},
+                    {'id': 'humor', 'text': '科幻电影频道已打开，欢迎分享观影感受。', 'reason': '用轻松的表达接续话题'},
+                    {'id': 'flirting', 'text': '想听你说说喜欢它的原因。', 'reason': '表达关心并保留边界'}],
+                    analysis={'facts': ['对方分享喜欢科幻电影'], 'inferences': [], 'unknowns': ['具体电影名称']})
+            content = json.dumps(generated, ensure_ascii=False)
             response = json.dumps({'choices': [{'message': {'content': content}}]}).encode()
             self.send_response(200)
             self.send_header('Content-Length', str(len(response)))

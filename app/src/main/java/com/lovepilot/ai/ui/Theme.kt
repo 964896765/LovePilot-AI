@@ -1,6 +1,7 @@
 package com.lovepilot.ai.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -16,6 +17,7 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -38,7 +40,9 @@ fun LovePilotTheme(content: @Composable () -> Unit) {
 @Composable
 fun SectionCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     Card(modifier = modifier.fillMaxWidth(), shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = Panel)) {
+        colors = CardDefaults.cardColors(containerColor = Panel.copy(alpha = 0.82f)),
+        border = BorderStroke(1.dp, Brush.linearGradient(listOf(Color.White.copy(alpha = 0.16f), Purple.copy(alpha = 0.08f), Mint.copy(alpha = 0.06f)))),
+        elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)) {
         Column(Modifier.padding(18.dp), content = content)
     }
 }

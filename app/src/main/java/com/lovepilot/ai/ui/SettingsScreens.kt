@@ -36,6 +36,11 @@ import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.coroutineScope
+import androidx.lifecycle.repeatOnLifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 
 @Composable
 fun MeScreen(state: AgentState, route: (String) -> Unit, backup: () -> Unit, restore: () -> Unit, erase: () -> Unit) {
@@ -50,6 +55,8 @@ fun MeScreen(state: AgentState, route: (String) -> Unit, backup: () -> Unit, res
             }
         }
         item { MenuCard("连接与权限", "服务地址、令牌与系统权限", { route("connection") }) }
+        item { MenuCard("安全中心", "人工确认、暂停与通知权限", { route("safety") }) }
+        item { MenuCard("微信接入验证", "P0 通知读取与快捷回复实测", { route("notification-probe") }) }
         item { MenuCard("模型设置", "DeepSeek / OpenAI 兼容供应商", { route("models") }) }
         item { MenuCard("个人表达风格", "长度、语气、幽默和提问偏好", { route("style") }) }
         item { MenuCard("Skills 管理", "查看与启用独立技能", { route("skills") }) }
@@ -107,7 +114,7 @@ fun ConnectionScreen(state: AgentState, model: AgentViewModel) {
                 InfoLine("语音转写", "使用系统识别服务")
                 InfoLine("兼容通知监听", if (enabled) "系统已启用" else "按需授权")
                 TextButton(onClick = { context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)) }) { Text("打开通知权限设置") }
-                Text("通知监听仅保留旧版快捷回复能力检测。Bot 消息通过 AstrBot 官方适配器处理。", color = Muted, fontSize = 12.sp)
+                Text("在「微信接入验证」查看通知内容与系统快捷回复实测结果。", color = Muted, fontSize = 12.sp)
             }
         }
     }
@@ -173,9 +180,9 @@ fun StyleScreen(state: AgentState, model: AgentViewModel) {
 @Composable
 fun SkillsScreen(state: AgentState, model: AgentViewModel) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-        item { PageHeading("Skills 管理", "12 项独立技能，共同尊重沟通边界") }
+        item { PageHeading("Skills 管理", "独立技能，共同尊重沟通边界") }
         items(state.skills, key = { it.getString("id") }) { skill ->
-            val locked = skill.optString("id") in setOf("boundary-guardian", "human-handoff")
+            val locked = skill.optString("id") in setOf("boundary-guardian", "human-handoff", "reply-quality-checker")
             SectionCard {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Column(Modifier.weight(1f)) {
@@ -237,6 +244,7 @@ fun LogsScreen(state: AgentState) {
 @Composable
 fun BotScreen(state: AgentState, model: AgentViewModel) {
     val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
     var url by remember(state.settings.optString("astrbot_url")) { mutableStateOf(state.settings.optString("astrbot_url", "http://127.0.0.1:6185")) }
     val login = state.botLogin
     val loginStatus = login?.optString("status")
@@ -246,8 +254,13 @@ fun BotScreen(state: AgentState, model: AgentViewModel) {
             BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap()
         }.getOrNull()
     }
-    LaunchedEffect(login?.optString("session_id"), loginStatus) {
-        if (loginStatus == "pending") repeat(120) { delay(2000); model.pollBotLogin() }
+    DisposableEffect(lifecycle, login?.optString("session_id"), loginStatus) {
+        val monitor = lifecycle.coroutineScope.launch {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                if (loginStatus == "pending") repeat(120) { delay(2000); model.pollBotLogin() }
+            }
+        }
+        onDispose { monitor.cancel() }
     }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item { PageHeading("微信 AI Bot", "独立 AI 身份 · AstrBot + 腾讯 iLink") }

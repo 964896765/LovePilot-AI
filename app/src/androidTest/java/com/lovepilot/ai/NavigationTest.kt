@@ -1,5 +1,7 @@
 package com.lovepilot.ai
 
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.platform.app.InstrumentationRegistry
@@ -8,6 +10,7 @@ import org.junit.Assume.assumeTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
+import org.junit.Assert.assertEquals
 
 class NavigationTest {
     @get:Rule val compose = createAndroidComposeRule<MainActivity>()
@@ -45,7 +48,7 @@ class NavigationTest {
         compose.activityRule.scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
         compose.waitForIdle()
         compose.onNodeWithText("Skills 管理").performScrollTo().performClick()
-        compose.onNodeWithText("12 项独立技能，共同尊重沟通边界").assertIsDisplayed()
+        compose.onNodeWithText("独立技能，共同尊重沟通边界").assertIsDisplayed()
     }
 
     @Test fun realBackendContactChatMemoryAndRevocation() {
@@ -68,6 +71,16 @@ class NavigationTest {
         compose.onNodeWithTag("chat-message").performTextInput("我喜欢科幻电影")
         compose.onNodeWithTag("chat-generate").performClick()
         waitFor("听起来很有意思，你最近看了哪部电影？")
+        compose.onNodeWithTag("chat-history").performScrollToNode(hasTestTag("reply-edit-gentle"))
+        val edited = "这是一条确认后复制的测试回复"
+        compose.onNodeWithTag("reply-edit-gentle").performTextReplacement(edited)
+        compose.onNodeWithTag("reply-copy-gentle").performClick()
+        val clipboard = InstrumentationRegistry.getInstrumentation().targetContext
+            .getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        assertEquals(edited, clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+        compose.onNodeWithTag("chat-history").performScrollToNode(hasText("取消本次回复"))
+        compose.onNodeWithText("取消本次回复").performClick()
+        compose.onAllNodesWithTag("reply-edit-gentle").assertCountEquals(0)
         compose.onNodeWithTag("nav-3").performClick()
         waitFor("科幻电影")
         compose.onNodeWithText("确认保存").performScrollTo().performClick()

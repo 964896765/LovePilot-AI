@@ -8,6 +8,8 @@ from urllib.parse import urlsplit
 
 
 def validate_base_url(value):
+    if not isinstance(value, str):
+        raise ValueError("invalid provider URL")
     parsed = urlsplit(value)
     if parsed.username or parsed.password or parsed.query or parsed.fragment:
         raise ValueError("invalid provider URL")

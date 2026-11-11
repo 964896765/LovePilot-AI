@@ -14,6 +14,10 @@ from astrbot.api.star import Context, Star
 from .delivery import DeliveryStore
 
 
+class RetryableDraft(Exception):
+    """The backend did not commit this message and permits redelivery."""
+
+
 class LovePilotBridge(Star):
     def __init__(self, context: Context):
         super().__init__(context)
@@ -47,7 +51,7 @@ class LovePilotBridge(Star):
                     raise
             await asyncio.sleep(0.5)
 
-    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE)
+    @filter.event_message_type(filter.EventMessageType.PRIVATE_MESSAGE, priority=100)
     async def on_private_message(self, event: AstrMessageEvent):
         if event.get_platform_name() != 'weixin_oc':
             return
@@ -69,6 +73,9 @@ class LovePilotBridge(Star):
             async for result in self._handle(event, cid, mid):
                 await event.send(result)
             completed = True
+        except RetryableDraft as exc:
+            logger.warning('LovePilot model response permits retry')
+            await event.send(event.plain_result(str(exc)))
         except httpx.HTTPStatusError as exc:
             logger.error('LovePilot API status=%s', exc.response.status_code)
             await event.send(event.plain_result('LovePilot 服务暂时不可用，请稍后重试。'))
@@ -76,10 +83,15 @@ class LovePilotBridge(Star):
             logger.error('LovePilot bridge failure type=%s', type(exc).__name__)
             await event.send(event.plain_result('LovePilot 连接失败，请稍后重试。'))
         finally:
+            if not completed:
+                self._last_seen.pop(cid, None)
             self.delivery.finish(scope, mid, completed)
 
     async def _handle(self, event, cid, mid):
         text = (event.message_str or '').strip()
+        original = (getattr(event.message_obj, 'message_str', '') or '').strip()
+        if original in ('/start', '/pause', '/forget', '/help'):
+            text = original
         if text == '/help':
             yield event.plain_result('我是 LovePilot AI 机器人。\n/start 开启本会话\n/pause 暂停\n/forget 删除本会话资料\n/help 帮助\n支持文本与适配器提供的语音转写。图片理解和语音发送需另行配置。')
             return
@@ -127,6 +139,8 @@ class LovePilotBridge(Star):
             permit = await self._request(client, 'GET', '/bot/permit', params={'contact_id': cid})
             if not permit.get('consent') or not permit.get('auto_reply_enabled'):
                 return
+            if result.get('retryable'):
+                raise RetryableDraft(result.get('reason') or '模型暂时不可用，请稍后重试。')
             if result.get('action') != 'draft':
                 yield event.plain_result(result.get('reason', '这次请由本人处理。'))
                 return

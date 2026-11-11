@@ -20,7 +20,7 @@ class Store(ctx: Context, name: String = "lovepilot.db") : SQLiteOpenHelper(ctx,
     }
 
     override fun onConfigure(db: SQLiteDatabase) {
-        db.execSQL("PRAGMA secure_delete=ON")
+        db.rawQuery("PRAGMA secure_delete=ON", null).use { it.moveToFirst() }
     }
 
     override fun onCreate(db: SQLiteDatabase) {

@@ -2,10 +2,11 @@
 import os
 import time
 
-from .models import validate_base_url
 from .security import decrypt_backup, encrypt_backup
-from .skills import CATALOGUE, GUARDIANS, catalogue
+from .settings import validate_settings
+from .skills import CATALOGUE, catalogue
 from .astrbot_admin import AstrBotAdmin
+from .core import REFINEMENTS
 
 
 def text(data, key, maximum, required=True):
@@ -81,27 +82,7 @@ class Service:
         raise KeyError("not found")
 
     def settings(self, values):
-        allowed = {"model_base_url", "model_name", "model_api_key", "auto_reply_enabled", "disabled_skills", "personal_style", "astrbot_url"}
-        if set(values) - allowed:
-            raise ValueError("unknown settings")
-        for key in ("model_base_url", "astrbot_url"):
-            if key in values:
-                validate_base_url(values[key])
-        for key in ("model_name", "model_api_key"):
-            if key in values:
-                text(values, key, 4096, required=False)
-        if 'auto_reply_enabled' in values and type(values['auto_reply_enabled']) is not bool:
-            raise ValueError('invalid switch')
-        if 'disabled_skills' in values:
-            disabled = values['disabled_skills']
-            if not isinstance(disabled, list) or any(item not in CATALOGUE or item in GUARDIANS for item in disabled):
-                raise ValueError('invalid disabled skills')
-        if 'personal_style' in values:
-            style = values['personal_style']
-            choices = {'length': {'简短', '适中'}, 'tone': {'口语', '温和', '正式'},
-                       'humor': {'少量', '关闭'}, 'flirting': {'克制', '关闭'}, 'questions': {'最多一个', '避免追问'}}
-            if not isinstance(style, dict) or any(key not in choices or value not in choices[key] for key, value in style.items()):
-                raise ValueError('invalid personal style')
+        validate_settings(values)
         self.memory.update_settings(values)
         self.semantic.start()
         return {"ok": True}
@@ -151,9 +132,19 @@ class Service:
             skill = data.get('skill')
             if skill is not None and skill not in CATALOGUE:
                 raise ValueError('invalid skill')
+            reply_mode = data.get('reply_mode', 'single')
+            if reply_mode not in ('single', 'three_options'):
+                raise ValueError('invalid reply mode')
+            regenerate = data.get('regenerate', False)
+            if type(regenerate) is not bool:
+                raise ValueError('invalid regenerate flag')
+            refinement = data.get('refinement')
+            if refinement is not None and (not isinstance(refinement, str) or refinement not in REFINEMENTS):
+                raise ValueError('invalid refinement')
             if data.get('source') == 'bot' and not self.memory.settings().get('auto_reply_enabled', False):
                 return {'action': 'paused', 'reason': 'Bot 自动回复已暂停'}
-            return self.agent.decide(cid, message, mid, skill=skill)
+            return self.agent.decide(cid, message, mid, skill=skill, reply_mode=reply_mode,
+                                     regenerate=regenerate, refinement=refinement)
         if not self.memory.contact(cid):
             raise KeyError('contact not found')
         if path == '/facts':

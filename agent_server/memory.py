@@ -9,6 +9,7 @@ import time
 import uuid
 
 from .migrations import migrate
+from .settings import PORTABLE_SETTINGS, validate_settings
 
 
 class Memory:
@@ -167,6 +168,8 @@ class Memory:
     def finish(self, cid, mid, owner, revision, message, result):
         """Atomically persist messages and cache after rechecking consent."""
         with self.transaction() as db:
+            if self.settings().get('processing_paused', False):
+                return {'action': 'handoff', 'reason': 'AI 处理已暂停，请本人处理'}
             valid = db.execute("SELECT 1 FROM contacts c JOIN contact_state s ON s.contact_id=c.id JOIN leases l ON l.contact_id=c.id WHERE c.id=? AND c.consent=1 AND s.revision=? AND l.owner=? AND l.expires_at>?", (cid, revision, owner, time.time())).fetchone()
             if not valid:
                 return {"action": "handoff", "reason": "联系人授权或资料已变更，请重新确认"}
@@ -217,8 +220,12 @@ class Memory:
 
     def update_settings(self, values):
         with self.transaction() as db:
+            was_paused = self.settings().get('processing_paused', False)
             for key, value in values.items():
                 db.execute("INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, self.seal(json.dumps(value, ensure_ascii=False))))
+            if values.get('processing_paused') and not was_paused:
+                for (cid,) in db.execute('SELECT id FROM contacts').fetchall():
+                    self._invalidate(db, cid)
 
     def runs(self, cid=None, limit=100):
         with self.lock:
@@ -298,9 +305,9 @@ class Memory:
                 record['excluded_history_indices'] = [index for index, row in enumerate(rows) if row[1] is not None]
                 record['audit'] = [{'decision': decision, 'created_at': created} for decision, created in self.db.execute('SELECT decision,created_at FROM audit WHERE contact_id=? ORDER BY id', (contact['contact_id'],))]
                 record['runs'] = self.runs(contact['contact_id'], -1)
+                record['handled_message_ids'] = [row[0] for row in self.db.execute('SELECT message_id FROM handled WHERE contact_id=? ORDER BY message_id', (contact['contact_id'],))]
                 contacts.append(record)
-            settings = self.settings()
-            settings.pop('model_api_key', None)
+            settings = {key: value for key, value in self.settings().items() if key in PORTABLE_SETTINGS}
             return {'version': 1, 'created_at': int(time.time()), 'contacts': contacts, 'settings': settings}
 
     def export_unlocked(self, cid):
@@ -312,6 +319,11 @@ class Memory:
         if not isinstance(document, dict) or document.get('version') != 1 or not isinstance(document.get('contacts'), list):
             raise ValueError('invalid backup document')
         records = document['contacts']
+        saved_settings = document.get('settings', {})
+        if not isinstance(saved_settings, dict):
+            raise ValueError('invalid backup settings')
+        settings = {key: value for key, value in saved_settings.items() if key in PORTABLE_SETTINGS}
+        validate_settings(settings)
         ids = []
         for record in records:
             if not isinstance(record, dict):
@@ -331,6 +343,22 @@ class Memory:
             for message in history:
                 if not isinstance(message, dict) or message.get('role') not in ('user', 'assistant') or not isinstance(message.get('content'), str):
                     raise ValueError('invalid backup message')
+            handled = record.get('handled_message_ids', [])
+            if not isinstance(handled, list) or any(not isinstance(mid, str) or not 1 <= len(mid) <= 120 for mid in handled):
+                raise ValueError('invalid handled message IDs')
+            details = record.get('fact_details', [])
+            if not isinstance(details, list):
+                raise ValueError('invalid fact metadata')
+            detail_keys = set()
+            for item in details:
+                if not isinstance(item, dict) or not isinstance(item.get('key'), str) or item['key'] not in facts or item['key'] in detail_keys:
+                    raise ValueError('invalid fact metadata key')
+                detail_keys.add(item['key'])
+                weight = item.get('base_weight', 1.0)
+                if type(weight) not in (int, float) or not 0 <= weight <= 100:
+                    raise ValueError('invalid fact weight')
+                if not isinstance(item.get('source', ''), str) or type(item.get('updated_at')) is not int or item['updated_at'] < 0:
+                    raise ValueError('invalid fact metadata')
             for item in record.get('candidates', []):
                 if not isinstance(item, dict) or item.get('status') not in ('pending', 'confirmed', 'rejected'):
                     raise ValueError('invalid backup candidate')
@@ -359,6 +387,8 @@ class Memory:
                 # Restored contacts require fresh consent and have no stale draft cache.
                 db.execute('INSERT INTO contacts VALUES(?,?,0,?)', (cid, self.seal(record['alias']), self.seal(record['notes'])))
                 db.execute('INSERT INTO contact_state VALUES(?,?)', (cid, uuid.uuid4().hex))
+                for mid in record.get('handled_message_ids', []):
+                    db.execute('INSERT OR IGNORE INTO handled VALUES(?,?)', (cid, mid))
                 for key, value in record['facts'].items():
                     db.execute('INSERT INTO facts VALUES(?,?,?,?)', (cid, key, self.seal(value), int(time.time())))
                 times = record.get('message_times', [int(time.time())] * len(record['history']))
@@ -373,14 +403,10 @@ class Memory:
                 for item in record.get('candidates', []):
                     db.execute('INSERT INTO candidates VALUES(?,?,?,?,?,?,?)', (item['id'], cid, item['category'], self.seal(item['value']), self.seal(item['source']), item['status'], item['created_at']))
                 for item in record.get('fact_details', []):
-                    if item.get('key') in record['facts']:
-                        weight = item.get('base_weight', 1.0)
-                        if type(weight) not in (int, float) or not 0 <= weight <= 100:
-                            raise ValueError('invalid fact weight')
-                        db.execute('INSERT INTO fact_meta VALUES(?,?,?,?,?)', (cid, item['key'], self.seal(str(item.get('source', ''))), weight, int(item['updated_at'])))
-            style = document.get('settings', {}).get('personal_style')
-            if isinstance(style, dict):
-                db.execute("INSERT INTO settings VALUES('personal_style',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (self.seal(json.dumps(style, ensure_ascii=False)),))
+                    db.execute('UPDATE facts SET updated_at=? WHERE contact_id=? AND fact_key=?', (item['updated_at'], cid, item['key']))
+                    db.execute('INSERT INTO fact_meta VALUES(?,?,?,?,?)', (cid, item['key'], self.seal(item.get('source', '')), item.get('base_weight', 1.0), item['updated_at']))
+            for key, value in settings.items():
+                db.execute('INSERT INTO settings VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', (key, self.seal(json.dumps(value, ensure_ascii=False))))
         return len(records)
 
     def erase_personal_data(self):

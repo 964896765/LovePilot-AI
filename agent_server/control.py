@@ -13,31 +13,41 @@ from dotenv import dotenv_values
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--stop', action='store_true')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--stop', action='store_true')
+    mode.add_argument('--port', action='store_true')
     options = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     values = dict(dotenv_values(root / '.env'))
     values.update(os.environ)
     token = values.get('LOVEPILOT_TOKEN', '')
     port = int(values.get('LOVEPILOT_PORT', '8768'))
+    if not 1 <= port <= 65535:
+        raise ValueError('LOVEPILOT_PORT must be between 1 and 65535')
+    if options.port:
+        print(port)
+        return
     path = '/admin/shutdown' if options.stop else '/health'
-    if options.stop:
-        (root / 'data').mkdir(exist_ok=True)
-        (root / 'data/agent.stop').touch()
     request = urllib.request.Request('http://127.0.0.1:' + str(port) + path,
         data=json.dumps({'confirm': 'STOP_AGENT'}).encode() if options.stop else None,
         headers={'Authorization': 'Bearer ' + token, 'Content-Type': 'application/json'})
     try:
         with urllib.request.urlopen(request, timeout=10) as response:
             result = json.load(response)
+    except urllib.error.HTTPError as exc:
+        raise RuntimeError('Agent control request rejected with HTTP ' + str(exc.code)) from None
     except urllib.error.URLError:
         if options.stop:
+            (root / 'data').mkdir(exist_ok=True)
+            (root / 'data/agent.stop').touch()
             print('Agent is not reachable. Watcher stop requested.')
             return
         raise
     if not options.stop:
         print(json.dumps(result))
         return
+    (root / 'data').mkdir(exist_ok=True)
+    (root / 'data/agent.stop').touch()
     deadline = time.monotonic() + 60
     while time.monotonic() < deadline:
         try:

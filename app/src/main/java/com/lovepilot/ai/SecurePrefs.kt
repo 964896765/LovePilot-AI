@@ -56,6 +56,10 @@ class SecurePrefs(context: Context) {
 
     fun clear() { prefs.edit().clear().apply() }
 
+    fun saveSetting(name: String, value: String) {
+        require(prefs.edit().putString(name, seal(value)).commit()) { "本地设置保存失败" }
+    }
+
     @Synchronized
     fun fingerprint(value: String): String {
         val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }

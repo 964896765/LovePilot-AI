@@ -133,6 +133,9 @@ fun ChatScreen(state: AgentState, model: AgentViewModel, voice: () -> Unit, addC
     var selectedSkill by remember { mutableStateOf("romance-reply") }
     val context = LocalContext.current
     LaunchedEffect(voiceText) { if (voiceText.isNotBlank()) { message = voiceText; consumeVoice() } }
+    LaunchedEffect(state.lastResult) {
+        if (state.lastResult != null && message.trim() == state.lastInput) message = ""
+    }
     Column(Modifier.fillMaxSize()) {
         Column(Modifier.padding(horizontal = 20.dp)) {
             PageHeading("聊天工作台", "回复、分析与复盘，始终保留你的选择")
@@ -144,7 +147,7 @@ fun ChatScreen(state: AgentState, model: AgentViewModel, voice: () -> Unit, addC
                 }
             }
         }
-        LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        LazyColumn(Modifier.weight(1f).testTag("chat-history"), contentPadding = PaddingValues(horizontal = 20.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             if (state.messages.isEmpty()) item {
                 SectionCard {
                     Text("从一条消息开始", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
@@ -170,9 +173,39 @@ fun ChatScreen(state: AgentState, model: AgentViewModel, voice: () -> Unit, addC
                             Text(result.optString("reason"), modifier = Modifier.padding(top = 8.dp))
                             result.optString("draft").takeIf { it.isNotBlank() }?.let { Text(it, color = Muted, modifier = Modifier.padding(top = 8.dp)) }
                         } else {
-                            Text("表达线索 · 含不确定性", color = Mint, fontSize = 12.sp)
-                            Text(result.optJSONObject("analysis")?.toString(2)?.take(1500) ?: "请结合原话与实际沟通判断。", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
+                            val analysis = result.optJSONObject("analysis")
+                            Text("表达线索", color = Mint, fontSize = 12.sp)
+                            if (analysis?.has("facts") == true) {
+                                listOf("facts" to "原话与上下文", "inferences" to "可能的解释", "unknowns" to "仍需了解").forEach { (key, label) ->
+                                    val values = analysis.optJSONArray(key)
+                                    if (values != null && values.length() > 0) {
+                                        Text(label, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(top = 12.dp))
+                                        Text((0 until values.length()).joinToString("\n") { values.optString(it) }, color = Muted, fontSize = 12.sp)
+                                    }
+                                }
+                            } else Text(analysis?.toString(2)?.take(1500) ?: "请结合原话与实际沟通判断。", color = Muted, fontSize = 12.sp, modifier = Modifier.padding(top = 8.dp))
                         }
+                    }
+                }
+                val options = result.optJSONArray("reply_options")
+                if (result.optString("action") == "draft" && options != null) {
+                    items(options.length()) { index ->
+                        ReplyOptionCard(options.getJSONObject(index), state.selectedContact,
+                            flirtingEnabled = state.settings.optJSONObject("personal_style")?.optString("flirting") != "关闭",
+                            humorEnabled = state.settings.optJSONObject("personal_style")?.optString("humor") != "关闭")
+                    }
+                }
+                item {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("shorter" to "简短一些", "longer" to "更详细", "casual" to "更口语", "gentle" to "更温柔").forEach { (key, label) ->
+                            SuggestionChip(onClick = { model.draft(state.lastInput, state.lastSkill, regenerate = true, refinement = key) },
+                                label = { Text(label) }, enabled = !state.busy && !state.paused && state.lastInput.isNotBlank() && state.connected)
+                        }
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                        TextButton(onClick = { model.draft(state.lastInput, state.lastSkill, regenerate = true) },
+                            enabled = !state.busy && !state.paused && state.lastInput.isNotBlank() && state.connected) { Text("重新生成") }
+                        TextButton(onClick = model::cancelReply, enabled = !state.busy) { Text("取消本次回复") }
                     }
                 }
             }
@@ -184,11 +217,42 @@ fun ChatScreen(state: AgentState, model: AgentViewModel, voice: () -> Unit, addC
                 Row(Modifier.fillMaxWidth().padding(top = 8.dp), verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = voice, enabled = !state.busy) { Text("语音转写") }
                     Spacer(Modifier.weight(1f))
-                    Button(onClick = { model.draft(message.trim(), selectedSkill); message = "" },
-                        modifier = Modifier.testTag("chat-generate"), enabled = message.isNotBlank() && state.selectedContact.isNotBlank() && state.connected && !state.busy) { Text("生成建议  ↑") }
+                    Button(onClick = { model.draft(message.trim(), selectedSkill) },
+                        modifier = Modifier.testTag("chat-generate"), enabled = message.isNotBlank() && state.selectedContact.isNotBlank() && state.connected && !state.busy && !state.paused) { Text(if (state.paused) "AI 已暂停" else "生成建议  ↑") }
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ReplyOptionCard(option: JSONObject, contactId: String, flirtingEnabled: Boolean, humorEnabled: Boolean) {
+    val context = LocalContext.current
+    val original = option.optString("text")
+    var edited by remember(contactId, original) { mutableStateOf(original) }
+    var showReason by remember(contactId, original) { mutableStateOf(false) }
+    var notice by remember(contactId, original) { mutableStateOf("") }
+    val title = when (option.optString("id")) {
+        "gentle" -> "自然温柔"
+        "humor" -> if (humorEnabled) "轻松幽默" else "自然表达"
+        else -> if (flirtingEnabled) "适度暧昧" else "自然关心"
+    }
+    SectionCard {
+        Text(title, color = Mint, fontWeight = FontWeight.SemiBold)
+        OutlinedTextField(edited, { edited = it.take(2000); notice = "" }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp).testTag("reply-edit-${option.optString("id")}"),
+            minLines = 2, label = { Text("编辑回复") }, shape = RoundedCornerShape(16.dp))
+        Row {
+            TextButton(onClick = { copy(context, edited.trim()); notice = "已复制，请在微信核对联系人并发送" }, enabled = edited.isNotBlank(),
+                modifier = Modifier.testTag("reply-copy-${option.optString("id")}")) { Text("确认并复制") }
+            TextButton(onClick = { showReason = !showReason }) { Text("生成原因") }
+        }
+        if (showReason) Text(option.optString("reason"), color = Muted, fontSize = 12.sp)
+        TextButton(onClick = {
+            val intent = context.packageManager.getLaunchIntentForPackage("com.tencent.mm")
+            if (intent == null) notice = "请从手机桌面打开微信，核对原会话后发送"
+            else runCatching { context.startActivity(intent) }.onFailure { notice = "微信未能打开，请从手机桌面进入" }
+        }) { Text("打开微信") }
+        if (notice.isNotBlank()) Text(notice, color = Mint, fontSize = 12.sp)
     }
 }
 

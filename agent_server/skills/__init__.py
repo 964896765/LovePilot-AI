@@ -6,7 +6,7 @@ from pathlib import Path
 CATALOGUE = {item["id"]: item for item in (
     json.loads(path.read_text(encoding="utf-8")) for path in sorted(Path(__file__).parent.glob("*.json"))
 )}
-GUARDIANS = {"boundary-guardian", "human-handoff"}
+GUARDIANS = {"boundary-guardian", "human-handoff", "reply-quality-checker"}
 
 
 def catalogue(settings):

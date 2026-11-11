@@ -6,13 +6,18 @@ $pythonPath = Join-Path $projectRoot '.venv\Scripts\python.exe'
 if (-not (Test-Path -LiteralPath $pythonPath)) { throw 'Run scripts\Setup.ps1 first.' }
 if (-not (Test-Path -LiteralPath '.env')) { & $pythonPath -m agent_server.configure }
 $env:PYTHONIOENCODING = 'utf-8'
+$agentPort = & $pythonPath -m agent_server.control --port
+if ($LASTEXITCODE -ne 0) { throw 'Invalid Agent port configuration.' }
+$agentPort = [int]$agentPort
 $stopPath = Join-Path $projectRoot 'data\agent.stop'
 if (-not $Watch) {
     if (Test-Path -LiteralPath $stopPath) { Remove-Item -LiteralPath $stopPath }
 }
 if ($Background) {
-    if (Get-NetTCPConnection -LocalPort 8768 -State Listen -ErrorAction SilentlyContinue) {
-        Write-Output 'Agent is already listening on port 8768.'
+    if (Get-NetTCPConnection -LocalPort $agentPort -State Listen -ErrorAction SilentlyContinue) {
+        & $pythonPath -m agent_server.control
+        if ($LASTEXITCODE -ne 0) { throw "Port $agentPort is occupied by an unavailable or unauthorized service." }
+        Write-Output "Agent is already listening on port $agentPort."
         exit 0
     }
     $logs = Join-Path $projectRoot 'data\logs'

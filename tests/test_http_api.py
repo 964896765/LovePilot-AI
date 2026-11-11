@@ -17,13 +17,15 @@ import uuid
 
 SERVER_RUNNER = """
 import os
+import json
 import sys
 import threading
 from pathlib import Path
 from http.server import ThreadingHTTPServer
 from agent_server import server
+from tests.test_reply_options import generation
 
-server.agent.model = lambda prompt, history: 'synthetic-http-draft'
+server.agent.model = lambda prompt, history: json.dumps(generation()) if 'reply_options' in prompt else 'synthetic-http-draft'
 httpd = ThreadingHTTPServer(('127.0.0.1', 0), server.Handler)
 worker = threading.Thread(target=httpd.serve_forever)
 worker.start()
@@ -151,6 +153,19 @@ class HttpApiTests(unittest.TestCase):
         history = self.request("GET", "/memory?contact_id=" + self.contact_id)[1]["history"]
         self.assertEqual(len(history), 2)
 
+    def test_three_options_and_regeneration_through_http(self):
+        self.create_contact()
+        request = {'contact_id': self.contact_id, 'message': '你好', 'message_id': 'options-one',
+                   'reply_mode': 'three_options'}
+        first = self.request('POST', '/draft', request)
+        self.assertEqual(first[0], 200)
+        self.assertEqual(len(first[1]['reply_options']), 3)
+        self.assertEqual(self.request('POST', '/draft', request), first)
+        rewritten = self.request('POST', '/draft', dict(request, message_id='options-two', regenerate=True, refinement='gentle'))
+        self.assertEqual(rewritten[1]['action'], 'draft')
+        history = self.request('GET', '/memory?contact_id=' + self.contact_id)[1]['history']
+        self.assertEqual(len(history), 2)
+
     def test_sensitive_handoff(self):
         self.create_contact()
         status, body = self.request("POST", "/draft", {
@@ -262,6 +277,21 @@ class HttpApiTests(unittest.TestCase):
         self.assertEqual(self.request('POST', '/settings', {'auto_reply_enabled': 'true'})[0], 400)
         self.assertEqual(self.request('POST', '/settings', {'personal_style': {'invented': 'guess'}})[0], 400)
         self.assertEqual(self.request('POST', '/settings', {'model_base_url': 'http://untrusted.example'})[0], 400)
+
+    def test_pause_and_generation_options_validate_through_http(self):
+        self.create_contact()
+        self.assertEqual(self.request('POST', '/settings', {'processing_paused': 'yes'})[0], 400)
+        try:
+            self.assertEqual(self.request('POST', '/settings', {'processing_paused': True})[0], 200)
+            status, result = self.request('POST', '/draft', {'contact_id': self.contact_id, 'message': '你好'})
+            self.assertEqual(status, 200)
+            self.assertEqual(result['action'], 'paused')
+        finally:
+            self.request('POST', '/settings', {'processing_paused': False})
+        for field, value in [('reply_mode', 'unknown'), ('regenerate', 'yes'), ('refinement', 'invented')]:
+            with self.subTest(field=field):
+                data = {'contact_id': self.contact_id, 'message': '你好', field: value}
+                self.assertEqual(self.request('POST', '/draft', data)[0], 400)
 
     def test_bot_and_reader_token_scopes(self):
         self.assertEqual(self.request('GET', '/health', token=self.bot_token)[0], 200)

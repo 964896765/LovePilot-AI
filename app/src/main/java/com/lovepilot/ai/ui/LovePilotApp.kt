@@ -7,6 +7,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -20,16 +21,21 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.coroutineScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lovepilot.ai.AgentViewModel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.util.Locale
 
@@ -59,16 +65,22 @@ fun LovePilotApp(model: AgentViewModel = viewModel()) {
     LaunchedEffect(state.pendingBackup) {
         if (state.pendingBackup != null) createBackup.launch("LovePilot-backup-${System.currentTimeMillis()}.lpbackup")
     }
-    LaunchedEffect(state.token, state.baseUrl) {
-        while (true) {
-            delay(15000)
-            if (state.token.isNotBlank() && lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) model.refresh(silent = true)
+    DisposableEffect(lifecycle, state.token, state.baseUrl) {
+        val monitor = lifecycle.coroutineScope.launch {
+            lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (true) {
+                    delay(15000)
+                    if (state.token.isNotBlank()) model.refresh(silent = true)
+                }
+            }
         }
+        onDispose { monitor.cancel() }
     }
     BackHandler(route.isNotBlank() || tab != 0) { if (route.isNotBlank()) route = "" else tab = 0 }
     val navigate: (String) -> Unit = { route = it }
     val addContact = { editContact = null; contactEditor = true }
-    Scaffold(containerColor = Background, bottomBar = {
+    Scaffold(modifier = Modifier.background(Brush.linearGradient(listOf(Background, Color(0xFF1C2039), Color(0xFF122831)))),
+        containerColor = Color.Transparent, bottomBar = {
         NavigationBar(containerColor = Panel, tonalElevation = 0.dp) {
             val titles = listOf("首页", "聊天", "联系人", "记忆", "我的")
             val icons = listOf(Icons.Default.Home, Icons.Default.Email, Icons.Default.Person, Icons.Default.Favorite, Icons.Default.Settings)
@@ -88,6 +100,8 @@ fun LovePilotApp(model: AgentViewModel = viewModel()) {
             Box(Modifier.weight(1f)) {
                 when (route) {
                     "connection" -> ConnectionScreen(state, model)
+                    "notification-probe" -> NotificationProbeScreen()
+                    "safety" -> SafetyScreen(state, model) { route = "notification-probe" }
                     "models" -> ModelsScreen(state, model)
                     "style" -> StyleScreen(state, model)
                     "skills" -> SkillsScreen(state, model)

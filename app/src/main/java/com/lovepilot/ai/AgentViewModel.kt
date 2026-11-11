@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +22,7 @@ import java.util.UUID
 data class AgentState(
     val busy: Boolean = false,
     val connected: Boolean = false,
+    val paused: Boolean = false,
     val notice: String = "先连接你的 LovePilot 服务",
     val baseUrl: String = "http://127.0.0.1:8768",
     val token: String = "",
@@ -37,6 +39,8 @@ data class AgentState(
     val botLogin: JSONObject? = null,
     val selectedContact: String = "",
     val lastResult: JSONObject? = null,
+    val lastInput: String = "",
+    val lastSkill: String = "romance-reply",
     val pendingBackup: String? = null,
     val pendingRestore: String? = null
 )
@@ -46,19 +50,22 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     private val mutable = MutableStateFlow(AgentState())
     val state = mutable.asStateFlow()
     private val mutex = Mutex()
+    private val pauseMutex = Mutex()
+    private var aiJob: Job? = null
 
     init {
         try {
-            mutable.update { it.copy(baseUrl = prefs.read("url", it.baseUrl), token = prefs.read("token")) }
+            mutable.update { it.copy(baseUrl = prefs.read("url", it.baseUrl), token = prefs.read("token"), paused = prefs.read("processing_paused", "false").toBoolean()) }
             if (mutable.value.token.isNotBlank()) refresh()
         } catch (_: Exception) {
             mutable.update { it.copy(notice = "设备密钥已变化，请重新输入连接配置") }
         }
     }
 
-    private fun operation(block: suspend (ApiClient) -> Unit) {
+    private fun operation(ai: Boolean = false, block: suspend (ApiClient) -> Unit) {
+        if (ai && mutable.value.paused) return
         if (mutable.value.busy) return
-        viewModelScope.launch {
+        val job = viewModelScope.launch {
             mutex.withLock {
                 mutable.update { it.copy(busy = true) }
                 try {
@@ -71,6 +78,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
         }
+        if (ai) aiJob = job
     }
 
     private suspend fun snapshot(client: ApiClient) = coroutineScope {
@@ -93,9 +101,14 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
         val loadedBot = bot.await()
         val loadedRuns = runs.await()
         val loadedLogs = logs.await()
+        val paused = prefs.read("processing_paused", "false").toBoolean() || loadedSettings.optBoolean("processing_paused")
+        val authorizedSelection = profiles.any { it.optString("contact_id") == selected && it.optBoolean("consent") }
         mutable.update { it.copy(connected = true, contacts = profiles, skills = loadedSkills,
             candidates = loadedCandidates, status = loadedStatus, settings = loadedSettings,
-            bot = loadedBot, runs = loadedRuns, logs = loadedLogs, selectedContact = selected) }
+            bot = loadedBot, runs = loadedRuns, logs = loadedLogs, selectedContact = selected,
+            paused = paused,
+            lastResult = if (selected == it.selectedContact && authorizedSelection && !paused) it.lastResult else null,
+            lastInput = if (selected == it.selectedContact && authorizedSelection && !paused) it.lastInput else "") }
         loadMemory(client, selected)
     }
 
@@ -124,7 +137,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
             val clean = validateApiEndpoint(url, BuildConfig.DEBUG)
             require(token.isNotBlank()) { "请填写访问令牌" }
             prefs.saveConnection(clean, token.trim())
-            mutable.update { it.copy(baseUrl = clean, token = token.trim(), connected = false, lastResult = null) }
+            mutable.update { it.copy(baseUrl = clean, token = token.trim(), connected = false, lastResult = null, lastInput = "") }
             refresh()
         } catch (error: Exception) {
             mutable.update { it.copy(notice = error.message ?: "连接配置无效") }
@@ -132,7 +145,7 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectContact(cid: String) = operation { client ->
-        mutable.update { it.copy(selectedContact = cid, lastResult = null) }
+        mutable.update { it.copy(selectedContact = cid, lastResult = null, lastInput = "") }
         loadMemory(client, cid)
     }
 
@@ -146,13 +159,46 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun revoke(cid: String) = mutate("/revoke", JSONObject().put("contact_id", cid), "授权已撤销")
     fun deleteContact(cid: String) = mutate("/delete", JSONObject().put("contact_id", cid), "联系人及其聊天、记忆已删除")
 
-    fun draft(message: String, skill: String) = operation { client ->
+    fun draft(message: String, skill: String, regenerate: Boolean = false, refinement: String? = null) = operation(ai = true) { client ->
         val cid = mutable.value.selectedContact
         require(cid.isNotBlank()) { "请先创建并选择联系人" }
-        val result = client.post("/draft", JSONObject().put("contact_id", cid).put("message", message)
-            .put("message_id", UUID.randomUUID().toString()).put("skill", skill))
-        mutable.update { it.copy(lastResult = result, notice = if (result.optString("action") == "draft") "建议已生成，请确认后使用" else result.optString("reason")) }
+        val request = JSONObject().put("contact_id", cid).put("message", message)
+            .put("message_id", UUID.randomUUID().toString()).put("skill", skill).put("regenerate", regenerate)
+        if (skill in setOf("romance-reply", "humor-assistant", "flirting-assistant", "personal-style")) request.put("reply_mode", "three_options")
+        if (refinement != null) request.put("refinement", refinement)
+        val result = client.post("/draft", request)
+        mutable.update { it.copy(lastResult = result, lastInput = message, lastSkill = skill,
+            notice = if (result.optString("action") == "draft") "建议已生成，请编辑确认后使用" else result.optString("reason")) }
         snapshot(client)
+    }
+
+    fun cancelReply() { mutable.update { it.copy(lastResult = null, lastInput = "", notice = "已取消本次回复") } }
+
+    fun setPaused(paused: Boolean) {
+        try {
+            prefs.saveSetting("processing_paused", paused.toString())
+            if (paused) {
+                aiJob?.cancel()
+                NotificationProbe.clear(getApplication())
+            }
+            mutable.update { it.copy(paused = paused, lastResult = null, lastInput = "",
+                notice = if (paused) "AI 处理已暂停" else "人工确认模式已恢复") }
+        } catch (error: Exception) {
+            mutable.update { it.copy(notice = error.message ?: "暂停设置保存失败") }
+            return
+        }
+        if (mutable.value.token.isBlank()) return
+        viewModelScope.launch {
+            try {
+                pauseMutex.withLock {
+                    ApiClient(mutable.value.baseUrl, mutable.value.token).post("/settings",
+                        JSONObject().put("processing_paused", paused).put("auto_reply_enabled", false))
+                }
+            } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                mutable.update { it.copy(notice = if (paused) "本机已暂停，服务端同步失败，请检查连接" else "本机已恢复，服务端状态待同步") }
+            }
+        }
     }
 
     private fun mutate(path: String, data: JSONObject, notice: String) = operation { client ->
@@ -249,7 +295,8 @@ class AgentViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteAll() = operation { client ->
         client.post("/data/delete", JSONObject().put("confirm", "DELETE_ALL"))
         withContext(Dispatchers.IO) { Store(getApplication()).use { it.clearAll() } }
-        mutable.update { it.copy(lastResult = null, pendingBackup = null, notice = "联系人、记忆、聊天、日志和应用保存的模型密钥已删除") }
+        NotificationProbe.clear(getApplication())
+        mutable.update { it.copy(lastResult = null, lastInput = "", pendingBackup = null, notice = "联系人、记忆、聊天、日志和应用保存的模型密钥已删除") }
         snapshot(client)
     }
 }

@@ -107,6 +107,32 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         second = self.event(mid='persistent-duplicate')
         self.assertEqual(await self.dispatch(restarted, second, handler), [])
 
+    async def test_retryable_model_failure_can_redeliver_same_id(self):
+        bridge = self.bridge()
+        bridge.cooldown_seconds = 3
+        mid = 'retryable-model-failure'
+        failure = lambda _: self.httpx.Response(200, json={
+            'action': 'handoff', 'reason': 'temporary failure', 'retryable': True})
+        self.assertEqual(len(await self.dispatch(bridge, self.event(mid=mid), failure)), 1)
+        recovered = lambda _: self.httpx.Response(200, json={'action': 'draft', 'reply': 'recovered'})
+        self.assertEqual(len(await self.dispatch(bridge, self.event(mid=mid), recovered)), 1)
+        self.assertEqual(await self.dispatch(self.bridge(), self.event(mid=mid), recovered), [])
+
+    async def test_commands_survive_official_wake_prefix_removal(self):
+        expected = {'/start': '/contacts', '/pause': '/revoke', '/forget': '/delete', '/help': None}
+        bridge = self.bridge()
+        bridge.auto_reply = False
+        for command, path in expected.items():
+            with self.subTest(command=command):
+                calls = []
+                def handler(request):
+                    calls.append(request.url.path)
+                    return self.httpx.Response(200, json={'ok': True})
+                event = self.event(text=command, mid='wake-prefix-' + command)
+                event.message_str = command.removeprefix('/')
+                self.assertEqual(len(await self.dispatch(bridge, event, handler)), 1)
+                self.assertEqual(calls, [path] if path else [])
+
     async def test_pause_during_draft_prevents_send(self):
         bridge = self.bridge()
         client = self.httpx.AsyncClient

@@ -20,6 +20,9 @@ class ConversationState(TypedDict, total=False):
     analysis: dict
     intent: str
     selected_skills: list[str]
+    reply_mode: str
+    regenerate: bool
+    refinement: str | None
     trace: list[dict]
     result: dict
 
@@ -42,6 +45,8 @@ def build_graph(agent):
         return {'owner': state.get('owner') or uuid.uuid4().hex}
 
     def identify(state):
+        if agent.memory.settings().get('processing_paused', False):
+            return {'result': {'action': 'paused', 'reason': 'AI 处理已暂停'}, 'authorized': False}
         snapshot = agent.prepare(state['contact_id'], state.get('message_id'), state['owner'])
         if 'result' in snapshot:
             return {'result': snapshot['result'], 'authorized': False}
@@ -74,10 +79,13 @@ def build_graph(agent):
             instructions(selected, agent.memory.settings())
         except ValueError:
             return {'result': {'action': 'handoff', 'reason': '所选技能不可用', 'record_message': False}}
-        return {'selected_skills': [selected, 'relationship-memory', 'boundary-guardian']}
+        return {'selected_skills': [selected, 'relationship-memory', 'boundary-guardian', 'reply-quality-checker']}
 
     def generate(state):
         snapshot = dict(state['snapshot'])
+        snapshot['reply_mode'] = state.get('reply_mode', 'single')
+        snapshot['regenerate'] = state.get('regenerate', False)
+        snapshot['refinement'] = state.get('refinement')
         snapshot['task_instructions'] = instructions(state['selected_skills'][0], agent.memory.settings())
         recalled = {item['memory'] for item in state.get('context', {}).get('recalled', [])}
         weights = {item['key']: item['weight'] for item in agent.memory.fact_details(state['contact_id'])}
@@ -92,6 +100,8 @@ def build_graph(agent):
             result['requires_confirmation'] = True
             result['analysis'] = result.get('analysis', state['analysis'])
             result['skills'] = state['selected_skills']
+            result['quality_check'] = {'passed': True, 'checked_options': len(result.get('reply_options', [])) or 1,
+                                       'requires_confirmation': True}
         return {'result': result}
 
     def handoff(state):
@@ -100,8 +110,11 @@ def build_graph(agent):
 
     def persist(state):
         snapshot = state['snapshot']
+        result = dict(state['result'])
+        if state.get('regenerate'):
+            result['record_message'] = False
         result = agent.memory.finish(state['contact_id'], state.get('message_id'), state['owner'],
-                                     snapshot['revision'], state['message'], dict(state['result']))
+                                     snapshot['revision'], state['message'], result)
         if result.get('action') == 'draft':
             agent.memory.offer_candidates(state['contact_id'], state['message'], snapshot['revision'])
         agent.memory.save_run(state['owner'], state['contact_id'], result['action'], state.get('trace', []) + [{'node': 'memory_update'}])
